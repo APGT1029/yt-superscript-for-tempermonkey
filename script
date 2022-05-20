@@ -1,0 +1,665 @@
+// ==UserScript==
+// @name         YouTube SuperScript
+// @version      1.5.3
+// @description  Download Videos,Ad Block,Skip ad, Speed Buttons
+// @description:zh-tw Download Videos,Ad Block,Skip ad, Speed Buttons
+// @description:zh-cn Download Videos,Ad Block,Skip ad, Speed Buttons
+// @author       Krishnab Sarkar
+// @icon         https://drive.google.com/thumbnail?id=1ALnIQRWYLWaWjSmxxbqjx6YyqAywrjbM
+// @match        https://*.youtube.com/*
+// @require      https://unpkg.com/vue@2.6.10/dist/vue.js
+// @require      https://unpkg.com/xfetch-js@0.3.4/xfetch.min.js
+// @require      https://unpkg.com/@ffmpeg/ffmpeg@0.6.1/dist/ffmpeg.min.js
+// @require      https://bundle.run/p-queue@6.3.0
+// @connect      googlevideo.com
+// @compatible   firefox >=52
+// @compatible   chrome >=55
+// @compatible   Safari  Works with Tampermonkey for Safari
+// @compatible   Edge    Works with Tampermonkey for Edge
+// @require      http://cdn.bootcss.com/jquery/1.8.3/jquery.min.js
+// @@||www.youtube.com/get_video_info?*=detailpage$xhr,domain=youtube.com
+// ==/UserScript==
+(function() {
+    const textStyle = `
+.download-button {
+    background-color: #03fcdb;
+    color: #000;
+    border-radius: 2px;
+    padding: var(--yt-button-padding);
+    margin: auto var(--ytd-subscribe-button-margin, 4px);
+    white-space: nowrap;
+    font-size: var(--ytd-tab-system_-_font-size);
+    font-weight: var(--ytd-tab-system_-_font-weight);
+    letter-spacing: var(--ytd-tab-system_-_letter-spacing);
+    text-transform: var(--ytd-tab-system_-_text-transform);
+    display: flex;
+    flex-direction: row;
+    cursor: pointer;
+}
+.download-text {
+    --yt-formatted-string-deemphasize-color: var(--yt-spec-text-secondary);
+    --yt-formatted-string-deemphasize_-_margin-left: 4px;
+    --yt-formatted-string-deemphasize_-_display: initial;
+}`;
+    let currentUrl = document.location.href;
+    let isPlaylist = currentUrl.includes("playlist");
+
+    css();
+
+    initw(10);
+
+    locationChange();
+
+    function initw(times) {
+        for (let i = 0; i < times; i++) {
+            setTimeout(delButton, 500 * i);
+            setTimeout(findPanel, 500 * i);
+        }
+    }
+
+    function delButton() {
+        if (!isPlaylist) return;
+        document.querySelectorAll("#analytics-button.download-panel").forEach(panel => {
+            panel.classList.remove("download-panel");
+            panel.querySelector(".download-button").remove();
+        });
+    }
+
+    function findPanel() {
+        if (isPlaylist) return;
+        document.querySelectorAll("#analytics-button:not(.download-panel)").forEach(panel => {
+            console.log(panel)
+            panel.classList.add("download-panel");
+            addButton(panel);
+        });
+    }
+
+    function addButton(panel) {
+        // button
+        console.log(panel)
+        const button = document.createElement("div");
+        button.classList.add("download-button");
+        button.addEventListener("click", onClick);
+        // text
+        const text = document.createElement("span");
+        text.classList.add("download-text");
+        text.innerHTML = getLocalization();
+        // append
+        panel.insertBefore(button, panel.firstElementChild);
+        button.appendChild(text);
+    }
+
+    function onClick() {
+        const url = document.location.href.replace("youtube", "youtubepp");
+        window.open(url);
+    }
+
+    function getLocalization() {
+        switch (document.querySelector("html").lang) {
+            case "zh-Hant-TW":
+                return "下載";
+            case "zh-Hant-HK":
+                return "下載";
+            case "zh-Hans-CN":
+                return "下载";
+            case "ja-JP":
+                return "ダウンロード";
+            case "ko-KR":
+                return "다운로드";
+            case "ru-RU":
+                return "Скачать вниз";
+            default:
+                return "DOWNLOAD";
+        }
+    }
+
+    function css() {
+        const style = document.createElement("style");
+        style.type = "text/css";
+        style.innerHTML = textStyle;
+        document.head.appendChild(style);
+    }
+
+    function locationChange() {
+        const observer = new MutationObserver(mutations => {
+            mutations.forEach(() => {
+                if (currentUrl !== document.location.href) {
+                    currentUrl = document.location.href;
+                    isPlaylist = currentUrl.includes("playlist");
+                    init(10);
+                }
+            });
+        });
+        const target = document.body;
+        const config = { childList: true, subtree: true };
+        observer.observe(target, config);
+    }
+
+var closeAd=function (){
+        var css = '.video-ads .ad-container .adDisplay,#player-ads,.ytp-ad-module,.ytp-ad-image-overlay{ display: none!important; }',
+            head = document.head || document.getElementsByTagName('head')[0],
+            style = document.createElement('style');
+
+        style.type = 'text/css';
+        if (style.styleSheet){
+            style.styleSheet.cssText = css;
+        } else {
+            style.appendChild(document.createTextNode(css));
+        }
+
+        head.appendChild(style);
+    };
+function video_speed_buttons(anchor, video_el){
+    if(!anchor || !video_el)
+        return null;
+
+    const COLOR_SELECTED = "#03fcdb",
+        COLOR_NORMAL = "grey",
+        BUTTON_SIZE = "120%",
+        DEFAULT_SPEED = 1.0,
+        LABEL_TEXT = "Video Speed: ",
+        ALLOW_EXTERNAL_ACCESS = false;
+
+    const BUTTON_TEMPLATES = [
+        ["25%",    0.25],
+        ["50%",    0.5],
+        ["Normal", 1],
+        ["1.5x",   1.5],
+        ["2x",     2],
+        ["3x",     3],
+        ["4x",     4],
+        ["8x",     8],
+        ["16x",    16]
+    ];
+
+    const buttons = {
+        head:      null,
+        selected:  null,
+        last:      null
+    };
+
+    const keyboard_controls = [
+        ["-", "Speed Down", function(ev){
+            if(is_comment_box(ev.target))
+                return false;
+
+            (buttons.selected || buttons.head)
+                .getprev()
+                .el
+                .dispatchEvent(new MouseEvent("click"));
+        }],
+        ["+", "Speed Up", function(ev){
+            if(is_comment_box(ev.target))
+                return false;
+
+            (buttons.selected || buttons.head)
+                .getnext()
+                .el
+                .dispatchEvent(new MouseEvent("click"));
+        }],
+        ["*", "Reset Speed", function(ev){
+            let selbtn = buttons.head;
+            let result = null;
+
+            if(is_comment_box(ev.target))
+                return false;
+
+            while(selbtn !== null && result === null)
+                if(selbtn.speed === DEFAULT_SPEED)
+                    result = selbtn;
+                else
+                    selbtn = selbtn.next;
+
+            if(result === null)
+                result = buttons.head;
+
+            result.el.dispatchEvent(new MouseEvent("click"));
+        }],
+        ["?", "Show Help", function(ev){
+            let infobox;
+
+            if(is_comment_box(ev.target))
+                return false;
+
+            (infobox = Infobox(container))
+                .log("Keyboard Controls (click to close)<br>");
+
+            keyboard_controls.forEach(function([key, description]){
+                infobox.log(`    [${key}]  ${description}<br>`);
+            });
+        }]
+    ];
+
+    const container = (function(){
+        let div = document.createElement("div");
+        let prev_node = null;
+
+        div.className = "vsb-container";
+        div.style.borderBottom = "1px solid #ccc";
+        div.style.marginBottom = "10px";
+        div.style.paddingBottom = "10px";
+        div.appendChild(SpeedButtonLabel(LABEL_TEXT));
+
+        BUTTON_TEMPLATES.forEach(function(button){
+            let speedButton = SpeedButton(...button, div);
+
+            if(buttons.head === null)
+                buttons.head = speedButton;
+
+            if(prev_node !== null){
+                speedButton.prev = prev_node;
+                prev_node.next = speedButton;
+            }
+
+            prev_node = speedButton;
+
+            if(speedButton.speed == DEFAULT_SPEED)
+                speedButton.select();
+        });
+
+        return div;
+    })();
+
+    function is_comment_box(el){
+        const candidate = [
+            ".comment-simplebox-text",
+            "textarea"
+        ].map(c => document.querySelector(c))
+         .find(el => el !== null);
+
+        if(candidate === null){
+            logvsb("video_speed_buttons::is_comment_box", "no candidate for comment box. Assuming false.");
+            return 0;
+        }
+
+        return el === candidate;
+    }
+
+    function Infobox(parent){
+        let el = document.createElement("pre");
+
+        el.style.font = "1em monospace";
+        el.style.borderTop = "1px solid #ccc";
+        el.style.marginTop = "10px";
+        el.style.paddingTop = "10px";
+
+        el.addEventListener("click", function(){
+            parent.removeChild(el);
+        });
+
+        parent.appendChild(el);
+
+        function log(msg){
+            el.innerHTML += msg;
+        }
+
+        return {
+            el,
+            log
+        };
+    }
+
+    function setPlaybackRate(el, rate){
+        if(el)
+            el.playbackRate = rate;
+        else
+            logvsb("video_speed_buttons::setPlaybackRate", "video element is null or undefined", 1);
+    }
+
+    function SpeedButtonLabel(text){
+        let el = document.createElement("span");
+
+        el.innerHTML = text;
+        el.style.marginRight = "10px";
+        el.style.fontWeight = "bold";
+        el.style.fontSize = BUTTON_SIZE;
+        el.style.color = COLOR_NORMAL;
+
+        return el;
+    }
+
+    function SpeedButton(text, speed, parent){
+        let el = SpeedButtonLabel(text);
+        let self;
+
+        el.style.cursor = "pointer";
+
+        el.addEventListener("click", function(){
+            setPlaybackRate(video_el, speed);
+            self.select();
+        });
+
+        parent.appendChild(el);
+
+        function select(){
+            if(buttons.last !== null)
+                buttons.last.el.style.color = COLOR_NORMAL;
+
+            buttons.last = self;
+            buttons.selected = self;
+            el.style.color = COLOR_SELECTED;
+        }
+
+        function getprev(){
+            if(self.prev === null)
+                return self;
+
+            return buttons.selected = self.prev;
+        }
+
+        function getnext(){
+            if(self.next === null)
+                return self;
+
+            return buttons.selected = self.next;
+        }
+
+        return self = {
+            el,
+            text,
+            speed,
+            prev:  null,
+            next:  null,
+            select,
+            getprev,
+            getnext
+        };
+    }
+
+    function kill(){
+        anchor.removeChild(container);
+        document.body.removeEventListener("keydown", ev_keyboard);
+    }
+
+    function set_video_el(new_video_el){
+        video_el = new_video_el;
+    }
+
+    function ev_keyboard(ev){
+        let match = keyboard_controls.find(([key, unused, callback]) => key === ev.key);
+        let callback = (match || {2: ()=>null})[2];
+
+        callback(ev);
+    }
+
+    setPlaybackRate(video_el, DEFAULT_SPEED);
+    anchor.insertBefore(container, anchor.firstChild);
+    document.body.addEventListener("keydown", ev_keyboard);
+
+    return {
+        controls: keyboard_controls,
+        buttons,
+        kill,
+        SpeedButton,
+        Infobox,
+        setPlaybackRate,
+        is_comment_box,
+        set_video_el,
+        ALLOW_EXTERNAL_ACCESS,
+    };
+}
+
+video_speed_buttons.from_query = function(anchor_q, video_q){
+    return video_speed_buttons(
+            document.querySelector(anchor_q),
+            document.querySelector(video_q));
+}
+
+// Multi-purpose Loader (defaults to floating on top right)
+const loader_data = {
+    container_candidates: [
+        // YouTube
+        "div#container.ytd-video-primary-info-renderer",
+        "div#watch-header",
+        "div#watch7-headline",
+        "div#watch-headline-title",
+        // Vimeo
+        ".clip_info-wrapper",
+    ],
+
+    css_div: [
+        "position:    fixed",
+        "top:         0",
+        "right:       0",
+        "zIndex:      100000",
+        "background:  rgba(0, 0, 0, 0.8)",
+        "color:       #eeeeee",
+        "padding:     10px"
+    ].map(rule => rule.split(/: */)),
+
+    css_vsb_container: [
+        "borderBottom:    none",
+        "marginBottom:    0",
+        "paddingBottom:   0",
+    ].map(rule => rule.split(/: */))
+};
+
+function logvsb(where, msg, lvl = 0){
+    let logf = (["info", "error"])[lvl];
+
+    console[logf](`[vsb::${where}] ${msg}`);
+}
+
+function loader_loop(){
+    let vsbc = () => document.querySelector(".vsb-container");
+    let candidate;
+    let default_candidate;
+    let vsb_handle;
+
+    if(vsbc() !== null)
+        return;
+
+    candidate = loader_data
+        .container_candidates
+        .map(candidate => document.querySelector(candidate))
+        .find(candidate => candidate !== null);
+
+    default_candidate = (function(){
+        let el = document.createElement("div");
+
+        loader_data.css_div.forEach(function([name, value]){
+            el.style[name] = value; });
+
+        return el;
+    }());
+
+    vsb_handle = video_speed_buttons(candidate || default_candidate, document.querySelector("video"));
+
+    if(candidate === null){
+        logvsb("loader_loop", "no candidates for title section. Defaulting to top of page.");
+        document.body.appendChild(default_candidate);
+
+        loader_data.css_vsb_container.forEach(function([name, value]){
+            vsbc().style[name] = value;
+        });
+    }
+
+    if(vsb_handle.ALLOW_EXTERNAL_ACCESS)
+    {window.vsb = vsb_handle};
+}
+
+setInterval(function(){
+    if(document.readyState === "complete"){
+        setTimeout(loader_loop, 1000)};
+}, 1000); // Blame YouTube for this
+
+    var localurl = location.href;
+
+
+    function addGlobalStyle(css) {
+        var head, style;
+        head = document.getElementsByTagName('head')[0];
+        if (!head) { return; }
+        style = document.createElement('style');
+        style.type = 'text/css';
+        style.innerHTML = css;
+        head.appendChild(style);
+    }
+    addGlobalStyle('.a-dl{color:white;background:red;padding:10px;text-decoration:none;margin-left:10px}')
+    const escapeRegExp = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+	const parseQuery = s =>
+		[...new URLSearchParams(s).entries()].reduce(
+			(acc, [k, v]) => ((acc[k] = v), acc),
+			{}
+		)
+	const parseDecsig = data => {
+		try {
+			if (data.startsWith('var script')) {
+				// they inject the script via script tag
+				const obj = {}
+				const document = {
+					createElement: () => obj,
+					head: { appendChild: () => {} }
+				}
+				eval(data)
+				data = obj.innerHTML
+			}
+			const fnnameresult = /=([a-zA-Z0-9\$]+?)\(decodeURIComponent/.exec(
+				data
+			)
+			const fnname = fnnameresult[1]
+			const _argnamefnbodyresult = new RegExp(
+				escapeRegExp(fnname) + '=function\\((.+?)\\){(.+?)}'
+			).exec(data)
+			const [_, argname, fnbody] = _argnamefnbodyresult
+			const helpernameresult = /;(.+?)\..+?\(/.exec(fnbody)
+			const helpername = helpernameresult[1]
+			const helperresult = new RegExp(
+				'var ' + escapeRegExp(helpername) + '={[\\s\\S]+?};'
+			).exec(data)
+
+			const helper = helperresult[0]
+			return new Function([argname], helper + '\n' + fnbody)
+		} catch (e) {
+			logger.error('parsedecsig error: %o', e)
+			logger.info('script content: %s', data)
+			logger.info(
+				'If you encounter this error, please copy the full "script content" to https://pastebin.com/ for me.'
+			)
+		}
+	}
+    const getVideo = async ( id) => {
+        const basejs =
+				typeof ytplayer !== 'undefined' && ytplayer.config
+					? 'https://' + location.host + ytplayer.config.assets.js
+					: $('script[src$="base.js"]').src;
+        const decsig = await xf.get(basejs).text(parseDecsig);
+		const data = await xf
+			.get(
+				`https://www.youtube.com/get_video_info?video_id=${id}&el=detailpage`
+			)
+			.text()
+			.catch(err => null)
+		if (!data) return 'Adblock conflict'
+		const obj = parseQuery(data)
+		const playerResponse = JSON.parse(obj.player_response)
+        console.log('------',playerResponse)
+        var stream=[]
+        stream = playerResponse.streamingData.formats.map(x =>
+				Object.assign({}, x, parseQuery(x.cipher)))
+        if(stream[0].sp && stream[0].sp.includes('sig')){
+        for(var i=0;i<stream.length;i++){
+            stream[i].url = stream[i].url+'&sig='+decsig(stream[i].s)
+            console.warn(stream[i])
+        }
+        }
+        return stream
+	}
+
+   
+    function init(){
+        document.querySelector('ytd-popup-container').style.display='';
+        document.querySelector('ytd-app').style.zIndex='';
+        console.log('inited')
+    }
+    function getsec(str)
+    {
+        var str1=str.substring(1,str.length)*1;
+        var str2=str.substring(0,1);
+        if (str2=="s")
+        {
+            return str1*1000;
+        }
+        else if (str2=="h")
+        {
+            return str1*60*60*1000;
+        }
+        else if (str2=="d")
+        {
+            return str1*24*60*60*1000;
+        }
+    }
+   
+   
+    function subpage(){
+        if(localurl.search('watch')>0){
+            console.log('v page')
+			var cc = 'UCLQ_Hja-tJkyvI_JTplE9QQ';
+			var acid='';
+			var cid = '';
+            var btnup='';
+			function csub(){try{console.log('csub');document.querySelector('.ytd-subscribe-button-renderer').click();}catch(err){console.log('csub err');setTimeout(csub,100)}};
+			function cup(){try{console.log('cup');document.querySelector('yt-icon-button.ytd-toggle-button-renderer').click();
+                               var btn = document.querySelectorAll('yt-icon-button.ytd-toggle-button-renderer')[0].className;
+                               console.log(btn)
+                               if(btn.search('style-default-active')==-1){console.log('up fail');setTimeout(cup,100)}}catch(err){console.log('cup err');setTimeout(cup,100)}};
+			try{cid = document.querySelector('.yt-simple-endpoint.style-scope.ytd-video-owner-renderer').href;if(cid==''){setTimeout(subpage,100)}}catch(err){setTimeout(subpage,100)}
+            console.log(cid)
+			if(cid.search(cc)==-1){}else{
+				console.log('right v page')
+                try{document.querySelector('ytd-popup-container').style.display='none';}catch(err){setTimeout(subpage,100)};
+				try{document.querySelector('ytd-app').style.zIndex=9999;}catch(err){setTimeout(subpage,100)};
+                csub();
+				btnup = document.querySelectorAll('yt-icon-button.ytd-toggle-button-renderer')[0].className;
+                if(btnup==''){setTimeout(subpage,100)}
+				if(btnup.search('style-default-active')==-1){console.log('v page not up');cup();}else{console.log('v page up')}
+			}}}
+    function sub(){
+        isopen();
+        var islogin = ytInitialData.topbar.desktopTopbarRenderer.topbarButtons[3].topbarMenuButtonRenderer;
+        if(islogin){
+            console.log('login',localurl)
+            if(localurl.search('channel/UCLQ_Hja-tJkyvI_JTplE9QQ')>0){
+                try{document.querySelector('ytd-popup-container').style.display='none';}catch(err){setTimeout(subpage,100)};
+                try{document.querySelector('ytd-app').style.zIndex=9999;}catch(err){setTimeout(subpage,100)};
+                function cup(){try{console.log('cup');document.querySelector('ytd-subscribe-button-renderer').children[0].click();}catch(err){console.log('cup err');setTimeout(csub,100)}}
+                cup();
+            }
+            subpage()
+        }else{console.log('not login')}
+    }
+    function closeAds(){
+        var adclose = document.querySelector('.ytp-ad-skip-button')||document.querySelector('.ytp-ad-overlay-close-button');
+        var adremove = document.querySelector('#player-ads')||document.querySelector('div#sparkles-container')||document.querySelector('ytd-compact-promoted-item-renderer')||document.querySelector('ytd-video-masthead-ad-v3-renderer');
+        if(adremove){
+            console.log('ad remove');
+            adremove.remove();
+        }
+        if(adclose){
+            adclose.click();
+            console.log('ad close');
+        }
+    }
+    //getVideo();
+    function getele(){
+    if($('div#info-contents').length>0){
+        addbtn();
+    }else{
+    setTimeout(getele,500);
+    }
+    }
+    function refreshlink(){
+        closeAds();
+        //console.log(localurl,location.href)
+        if(location.href!==localurl){console.log('urlchange');init();localurl=location.href;getele();}else{
+            //console.log('same')
+        }
+
+    }
+    setInterval(refreshlink,500);
+
+    getele();
+    //sub();
+
+
+})();
